@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>LD2420 Web Console</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+    label { display:block; margin:6px 0; }
+    input, button { padding:8px; }
+    .row { display:flex; gap:8px; flex-wrap: wrap; }
+    pre { background:#f7f7f7; padding:8px; border-radius:6px; overflow:auto; }
+    table { border-collapse: collapse; }
+    td, th { border: 1px solid #ccc; padding: 4px 8px; }
+    .threshold-table input { width: 8rem; }
+  </style>
+</head>
+<body>
+  <h1>HI-Link LD2420 Console</h1>
+
+  <div class="card">
+    <h3>Status</h3>
+    <div id="status"></div>
+  </div>
+
+  <div class="card">
+    <h3>Serial</h3>
+    <div class="row">
+      <label>Serial Port <input id="serialPort" placeholder="/dev/ttyUSB0"></label>
+      <label>Baud <input id="baud" type="number" step="1"></label>
+    </div>
+    <button onclick="saveConfig()">Save & Reopen Serial</button>
+  </div>
+
+  <div class="card">
+    <h3>Commands</h3>
+    <div class="row">
+      <button onclick="post('/api/open')">Open Command Mode</button>
+      <button onclick="post('/api/close')">Close Command Mode</button>
+      <button onclick="getVersion()">Read Version</button>
+      <button onclick="post('/api/reboot')">Reboot Module</button>
+    </div>
+    <div class="row">
+      <button onclick="setMode(0x64)">SystemMode RUN (0x64)</button>
+      <button onclick="setMode(0x04)">SystemMode ENERGY (0x04)</button>
+      <button onclick="setMode(0x00)">SystemMode DEBUG (0x00)</button>
+    </div>
+    <pre id="cmdOut"></pre>
+  </div>
+
+  <div class="card">
+    <h3>Read/Set Parameters</h3>
+    <p>Param IDs: `0x00` minDist, `0x01` maxDist, `0x04` delay, `0x10..0x1F` trigger thresholds, `0x20..0x2F` hold thresholds.</p>
+    <div class="row">
+      <label>Read IDs (comma separated) <input id="readIds" placeholder="0x10,0x11,0x12"></label>
+      <button onclick="doRead()">Read</button>
+    </div>
+    <div class="row">
+      <label>Set pairs (id=value; comma separated) <input id="setPairs" placeholder="0x10=60000,0x11=30000"></label>
+      <button onclick="doSet()">Set</button>
+    </div>
+    <pre id="paramOut"></pre>
+  </div>
+
+  <div class="card">
+    <h3>Gate Thresholds</h3>
+    <div class="row">
+      <button onclick="loadThresholds()">Load Thresholds</button>
+      <button onclick="saveThresholds()">Save Thresholds</button>
+    </div>
+    <table class="threshold-table">
+      <thead>
+        <tr><th>Gate</th><th>Trigger Threshold</th><th>Hold Threshold</th></tr>
+      </thead>
+      <tbody id="thresholdRows"></tbody>
+    </table>
+    <pre id="thresholdOut"></pre>
+  </div>
+
+  <div class="card">
+    <h3>Energy Output</h3>
+    <div id="energy">
+      <div>Presence: <b id="presence">-</b></div>
+      <div>Distance: <b id="distance">-</b></div>
+      <table>
+        <thead><tr><th>Gate</th><th>Energy</th></tr></thead>
+        <tbody id="gates"></tbody>
+      </table>
+      <div><small>Tip: set SystemMode to ENERGY (0x04) to stream these frames.</small></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
