@@ -65,6 +65,24 @@
   </div>
 
   <div class="card">
+    <h3>Detection Distance Window</h3>
+    <p class="hint">These controls update raw firmware parameters <code>0x00</code> and <code>0x01</code>. Use them to constrain the active distance window, including simple cases like ignoring Gate 0.</p>
+    <div class="row">
+      <label>Min Distance Value <input id="minDistance" type="number" min="0" step="1"></label>
+      <label>Max Distance Value <input id="maxDistance" type="number" min="0" step="1"></label>
+      <button onclick="loadDistanceWindow()">Load Distance Window</button>
+      <button onclick="saveDistanceWindow()">Save Distance Window</button>
+    </div>
+    <p class="hint">Gate helper: use this when you want to think in gates instead of raw distance values. For example, setting the minimum helper to Gate 1 is a simple way to ignore Gate 0.</p>
+    <div class="row">
+      <label>Min Gate Helper <input id="minGateHelper" type="number" min="0" max="15" step="1" value="0"></label>
+      <label>Max Gate Helper <input id="maxGateHelper" type="number" min="0" max="16" step="1" value="16"></label>
+      <button onclick="setDistanceWindowFromGates()">Fill From Gate Helper</button>
+    </div>
+    <pre id="distanceOut"></pre>
+  </div>
+
+  <div class="card">
     <h3>Motion Clear Delay</h3>
     <p class="hint">This updates parameter <code>0x04</code>, which this firmware exposes as the motion clear delay.</p>
     <div class="row">
@@ -77,15 +95,39 @@
 
   <div class="card">
     <h3>Gate Thresholds</h3>
+    <p class="hint">Move / Trigger thresholds use parameters <code>0x10..0x1F</code>. Still / Hold thresholds use parameters <code>0x20..0x2F</code>.</p>
     <p class="hint">This table uses the official HLK calibrator scale from 0 to 90.</p>
     <p class="hint">Conversion used behind the scenes: <code>HLK = 10 * log10(raw)</code>, <code>raw = 10^(HLK / 10)</code>. Example: raw <code>1000000</code> displays as HLK <code>60</code>.</p>
+    <p class="hint">Gate coverage is approximately 0.7 m per gate: Gate 0 is 0.0-0.7 m, Gate 1 is 0.7-1.4 m, Gate 2 is 1.4-2.1 m, and so on.</p>
+    <p class="hint">Gate actions: <code>Disable</code> sets a gate to <code>90/90</code>, which is the current convention for turning that gate off. <code>Enable</code> restores a usable value if a gate was disabled, and <code>Reset</code> returns that gate to a neutral <code>60/60</code> starting point.</p>
+    <div class="row">
+      <label>Profile Name <input id="profileName" placeholder="desk-profile"></label>
+      <button onclick="saveThresholdProfile()">Save Local Profile</button>
+      <label>Saved Profiles
+        <select id="profileSelect">
+          <option value="">-- Select Profile --</option>
+        </select>
+      </label>
+      <button onclick="loadThresholdProfile()">Load Local Profile</button>
+      <button onclick="deleteThresholdProfile()">Delete Local Profile</button>
+    </div>
+    <p class="hint">Profiles are stored only in this browser. Use them to keep tuning presets like <code>desk</code>, <code>room</code>, or <code>night</code> and then load them back before saving to the radar.</p>
+    <div class="row">
+      <label>Start Gate <input id="rangeStartGate" type="number" min="0" max="15" step="1" value="0"></label>
+      <label>End Gate <input id="rangeEndGate" type="number" min="0" max="15" step="1" value="15"></label>
+      <label>Bulk Move <input id="rangeTrigger" type="number" min="0" max="90" step="1" value="60"></label>
+      <label>Bulk Still <input id="rangeHold" type="number" min="0" max="90" step="1" value="60"></label>
+      <button onclick="applyThresholdRange()">Apply To Gate Range</button>
+      <button onclick="disableGateRange()">Disable Gate Range</button>
+    </div>
+    <p class="hint">Bulk actions are for fast tuning. They update the table immediately; use <code>Save Thresholds</code> after you are satisfied to actually write the changes to the radar.</p>
     <div class="row">
       <button onclick="loadThresholds()">Load Thresholds</button>
       <button onclick="saveThresholds()">Save Thresholds</button>
     </div>
     <table class="threshold-table">
       <thead>
-        <tr><th>Gate</th><th>Trigger Threshold (HLK 0-90)</th><th>Hold Threshold (HLK 0-90)</th></tr>
+        <tr><th>Gate</th><th>Move / Trigger Threshold (HLK 0-90)</th><th>Still / Hold Threshold (HLK 0-90)</th><th>Actions</th></tr>
       </thead>
       <tbody id="thresholdRows"></tbody>
     </table>
@@ -97,9 +139,16 @@
     <div id="energy">
       <div>Presence: <b id="presence">-</b></div>
       <div>Distance: <b id="distance">-</b></div>
-      <div><small>Live energy is shown as raw and HLK-style values. Threshold columns show <code>HLK / raw</code>, and margin columns show <code>energy_raw - threshold_raw</code>.</small></div>
+      <div class="row">
+        <button onclick="resetAllEnergyStats()">Reset Energy Stats</button>
+        <label>Delay Before Sampling (sec) <input id="energyDelaySecs" type="number" min="0" step="1" value="0"></label>
+        <button onclick="resetAllEnergyStatsWithDelay()">Reset With Delay</button>
+        <button id="energyPauseButton" onclick="toggleEnergySamplingPaused()">Stop Updates</button>
+      </div>
+      <div><small id="energyDelayStatus">Energy statistics are updating normally.</small></div>
+      <div><small>Live energy values below are shown only on the HLK-style scale. Current, min, mean, median, mode, and max update as frames arrive. Use <code>Stop Updates</code> to freeze the display in place until you resume.</small></div>
       <table>
-        <thead><tr><th>Gate</th><th>Energy Raw</th><th>Energy HLK</th><th>Trigger Thresh (HLK/raw)</th><th>Hold Thresh (HLK/raw)</th><th>Vs Trigger</th><th>Vs Hold</th></tr></thead>
+        <thead><tr><th>Gate</th><th>Current</th><th>Min</th><th>Mean</th><th>Median</th><th>Mode</th><th>Max</th><th>Move / Trigger Thresh</th><th>Still / Hold Thresh</th></tr></thead>
         <tbody id="gates"></tbody>
       </table>
       <div><small>Tip: set SystemMode to ENERGY (0x04) to stream these frames.</small></div>

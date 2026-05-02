@@ -23,6 +23,8 @@ It keeps the same API and browser UI as the original ESP32 firmware:
 
 The browser UI includes a dedicated threshold editor for all 16 trigger gates (`0x10..0x1F`) and 16 hold gates (`0x20..0x2F`) using the existing parameter endpoints.
 
+Each gate covers about `0.7 m`, so Gate 1 is roughly `0.7 m .. 1.4 m`.
+
 ## Files
 
 - `server.py`
@@ -97,13 +99,50 @@ The web UI converts between the HLK scale and the raw serial parameter values au
 - `raw = round(10 ** (hlk / 10))`
 - example: raw `1000000` is shown as HLK `60`
 
-The dedicated threshold table uses that HLK scale and shows the raw value under each field. The generic `Read/Set Parameters` section still exposes raw values directly for low-level access.
+The dedicated threshold table uses that HLK scale for editing. The generic `Read/Set Parameters` section still exposes raw values directly for low-level access.
 
 The `Energy Output` table also helps compare live activity against those settings:
 
-- shows live per-gate energy as both raw and HLK-style values
-- shows the current trigger and hold thresholds on the same row as `HLK/raw`
-- shows `energy_raw - threshold_raw` margins so you can see how far each gate is from its configured thresholds
+- shows per-gate live energy on the HLK scale only
+- shows per-gate `current`, `min`, `mean`, `median`, `mode`, and `max` live energy values
+- shows the current trigger and hold thresholds on the same row on the HLK scale
+- includes a reset button that clears the running energy statistics and starts recalculating them from new frames
+- includes a delayed reset option so you can clear the stats, walk away, and only begin sampling after a countdown
+- includes a stop/start control that freezes the displayed values until you resume live updates
+
+These values are useful when choosing trigger and hold thresholds:
+
+- `current` shows the gate's live level right now
+- `min` shows the lowest observed background level
+- `mean` shows the average level over the current sampling window
+- `median` is often more stable than mean when there are spikes
+- `mode` can help identify the most common steady-state level
+- `max` shows peak excursions when a person moves through the gate
+
+Practical tuning flow:
+
+- reset or delay-reset the energy stats while the area is clear to establish a baseline
+- use `min`, `median`, and `mode` as background references
+- walk into the target gate and watch `current` and `max`
+- set thresholds above the idle baseline but below the motion levels you want to detect
+
+In practice, the move / trigger threshold is usually guided by stronger motion peaks, while the still / hold threshold is often guided by quieter sustained presence levels.
+
+## Detection Distance Window
+
+The web UI includes a dedicated `Detection Distance Window` section for:
+
+- parameter `0x00` as the raw minimum distance value
+- parameter `0x01` as the raw maximum distance value
+
+These are the simplest controls in this repo for limiting very near detection such as ignoring Gate 0, though this repo keeps them as raw firmware values rather than converting them to gate numbers.
+
+The gate helper does not conflict with the raw minimum and maximum distance values:
+
+- it is only a convenience tool that fills the raw fields using the approximate `0.7 m` per gate spacing
+- it does not write anything to the radar by itself
+- `Save Distance Window` is the step that actually writes the current raw min/max values to the module
+- if you already know the exact raw values you want, you can ignore the helper and enter them directly
 
 ## Motion Clear Delay
 
@@ -134,6 +173,7 @@ What it does:
 - repeats the last known `ON` or `OFF` state every few seconds so you can tell the monitor is still alive
 - can optionally show a large popup window with the current motion state
 - when `RANGE ...` lines are available, shows an inferred gate number in the popup by mapping distance to 70 cm gates
+- excludes gates whose trigger and hold thresholds both resolve to HLK `90`, treating those `90/90` gates as disabled for popup inference
 
 Useful options:
 

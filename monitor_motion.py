@@ -15,10 +15,12 @@ CMD_TAIL = b"\x04\x03\x02\x01"
 
 CMD_OPEN_CMD_MODE = 0x00FF
 CMD_CLOSE_CMD_MODE = 0x00FE
+CMD_READ_PARAM = 0x0008
 CMD_SET_SYSTEM = 0x0012
 
 MODE_RUN = 0x64
 GATE_WIDTH_METERS = 0.7
+DISABLED_GATE_HLK = 90
 
 
 def u16le(value: int) -> bytes:
@@ -64,6 +66,78 @@ def send_command(ser: serial.Serial, cmd: int, payload: bytes = b"", timeout: fl
     return None
 
 
+def parse_command_response(frame: bytes):
+    if len(frame) < 14 or frame[:4] != CMD_HEADER or frame[-4:] != CMD_TAIL:
+        return None
+    dlen = frame[4] | (frame[5] << 8)
+    data = frame[6 : 6 + dlen]
+    if len(data) < 4:
+        return None
+    ret_cmd = data[0] | (data[1] << 8)
+    ret_code = data[2] | (data[3] << 8)
+    payload = data[4:]
+    return {"ret_cmd": ret_cmd, "ret_code": ret_code, "payload": payload}
+
+
+def raw_threshold_to_hlk(raw: int) -> int:
+    if raw <= 0:
+        return 0
+    return round(10 * math.log10(raw))
+
+
+def read_params(ser: serial.Serial, ids: list[int], verbose: bool):
+    payload = bytearray()
+    for param_id in ids:
+        payload.extend(u16le(param_id))
+    frame = send_command(ser, CMD_READ_PARAM, bytes(payload), timeout=1.5)
+    parsed = parse_command_response(frame) if frame is not None else None
+    if parsed is None or parsed["ret_code"] != 0x0000:
+        if verbose:
+            print("read params response:", hex_bytes(frame) if frame else "<none>")
+        return None
+    data = parsed["payload"]
+    expected_len = len(ids) * 4
+    if len(data) < expected_len:
+        if verbose:
+            print("read params payload too short:", hex_bytes(data))
+        return None
+    values = []
+    for idx in range(len(ids)):
+        offset = idx * 4
+        values.append(
+            data[offset]
+            | (data[offset + 1] << 8)
+            | (data[offset + 2] << 16)
+            | (data[offset + 3] << 24)
+        )
+    return values
+
+
+def load_disabled_gates(ser: serial.Serial, verbose: bool) -> set[int]:
+    trigger_ids = [0x10 + gate for gate in range(16)]
+    hold_ids = [0x20 + gate for gate in range(16)]
+    open_resp = send_command(ser, CMD_OPEN_CMD_MODE, u16le(0x0001))
+    if open_resp is None:
+        open_resp = send_command(ser, CMD_OPEN_CMD_MODE, u16le(0x0002))
+    trigger_values = read_params(ser, trigger_ids, verbose)
+    hold_values = read_params(ser, hold_ids, verbose)
+    close_resp = send_command(ser, CMD_CLOSE_CMD_MODE, b"", timeout=0.4)
+    if verbose:
+        print("threshold open response:", hex_bytes(open_resp) if open_resp else "<none>")
+        print("threshold close response:", hex_bytes(close_resp) if close_resp else "<none>")
+    if trigger_values is None or hold_values is None:
+        return set()
+    disabled = set()
+    for gate in range(16):
+        trigger_hlk = raw_threshold_to_hlk(trigger_values[gate])
+        hold_hlk = raw_threshold_to_hlk(hold_values[gate])
+        if trigger_hlk >= DISABLED_GATE_HLK and hold_hlk >= DISABLED_GATE_HLK:
+            disabled.add(gate)
+    if verbose:
+        print("disabled gates:", sorted(disabled))
+    return disabled
+
+
 def set_run_mode(ser: serial.Serial, verbose: bool):
     open_resp = send_command(ser, CMD_OPEN_CMD_MODE, u16le(0x0001))
     if open_resp is None:
@@ -94,7 +168,7 @@ def print_state(state: str, heartbeat: bool = False):
     print(f"{timestamp()} {prefix} {state}")
 
 
-def infer_gate_from_range_text(range_text: str):
+def infer_gate_from_range_text(range_text: str, disabled_gates: set[int] | None = None):
     match = re.search(r"(-?\d+(?:\.\d+)?)\s*([a-zA-Z]*)", range_text)
     if not match:
         return None
@@ -109,7 +183,8 @@ def infer_gate_from_range_text(range_text: str):
     if meters < 0:
         return None
     gate = max(0, min(15, int(math.floor(meters / GATE_WIDTH_METERS))))
-    return {"gate": gate, "meters": meters, "raw": range_text}
+    disabled = disabled_gates is not None and gate in disabled_gates
+    return {"gate": gate, "meters": meters, "raw": range_text, "disabled": disabled}
 
 
 @dataclass
@@ -194,6 +269,7 @@ def monitor(
     verbose: bool,
     popup: PopupStatus | None = None,
     heartbeat_secs: float = 5.0,
+    disabled_gates: set[int] | None = None,
 ):
     state = None
     line_buf = bytearray()
@@ -226,7 +302,10 @@ def monitor(
                     beep(1)
                     detail = ""
                     if last_range_info is not None:
-                        detail = f"Inferred gate {last_range_info['gate']} from range {last_range_info['raw']}"
+                        if last_range_info["disabled"]:
+                            detail = f"Ignored disabled gate {last_range_info['gate']} from range {last_range_info['raw']}"
+                        else:
+                            detail = f"Inferred gate {last_range_info['gate']} from range {last_range_info['raw']}"
                     if popup is not None:
                         popup.set_state(state, detail=detail)
                     print_state(state)
@@ -239,7 +318,10 @@ def monitor(
                     beep(2)
                     detail = ""
                     if last_range_info is not None:
-                        detail = f"Last inferred gate {last_range_info['gate']} from range {last_range_info['raw']}"
+                        if last_range_info["disabled"]:
+                            detail = f"Last range was disabled gate {last_range_info['gate']} from {last_range_info['raw']}"
+                        else:
+                            detail = f"Last inferred gate {last_range_info['gate']} from range {last_range_info['raw']}"
                     if popup is not None:
                         popup.set_state(state, detail=detail)
                     print_state(state)
@@ -248,13 +330,18 @@ def monitor(
                     last_state_report = time.monotonic()
             elif upper.startswith("RANGE "):
                 range_text = text.split(" ", 1)[1]
-                last_range_info = infer_gate_from_range_text(range_text)
+                last_range_info = infer_gate_from_range_text(range_text, disabled_gates=disabled_gates)
                 if verbose:
                     print("[RANGE]", range_text)
                     if last_range_info is not None:
-                        print(
-                            f"{timestamp()} [INFERRED] gate {last_range_info['gate']} from range {last_range_info['raw']}"
-                        )
+                        if last_range_info["disabled"]:
+                            print(
+                                f"{timestamp()} [INFERRED] ignored disabled gate {last_range_info['gate']} from range {last_range_info['raw']}"
+                            )
+                        else:
+                            print(
+                                f"{timestamp()} [INFERRED] gate {last_range_info['gate']} from range {last_range_info['raw']}"
+                            )
 
 
 def build_parser():
@@ -281,11 +368,18 @@ def main():
     try:
         if not args.skip_config:
             set_run_mode(ser, args.verbose)
+        disabled_gates = load_disabled_gates(ser, args.verbose)
         ser.reset_input_buffer()
         if args.delay_ms > 0:
             print(f"Waiting {args.delay_ms} ms before monitoring...")
             time.sleep(args.delay_ms / 1000.0)
-        monitor(ser, args.verbose, popup=popup, heartbeat_secs=args.heartbeat_secs)
+        monitor(
+            ser,
+            args.verbose,
+            popup=popup,
+            heartbeat_secs=args.heartbeat_secs,
+            disabled_gates=disabled_gates,
+        )
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
