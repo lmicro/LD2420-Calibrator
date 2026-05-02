@@ -31,6 +31,8 @@ The browser UI includes a dedicated threshold editor for all 16 trigger gates (`
   - CPython serial driver for the LD2420 protocol
 - `monitor_motion.py`
   - terminal motion monitor with bell notifications
+- `monitor_gate_power.py`
+  - popup monitor for one gate's live energy statistics
 - `requirements.txt`
   - Python dependency list
 - `www/index.html`
@@ -86,8 +88,30 @@ The `Gate Thresholds` section in the web UI lets you:
 
 - load all 16 trigger thresholds
 - load all 16 hold thresholds
-- edit them in a table
+- edit them in the official HLK calibrator `0..90` scale
 - save them back to the module
+
+The web UI converts between the HLK scale and the raw serial parameter values automatically:
+
+- `hlk = round(10 * log10(raw))`
+- `raw = round(10 ** (hlk / 10))`
+- example: raw `1000000` is shown as HLK `60`
+
+The dedicated threshold table uses that HLK scale and shows the raw value under each field. The generic `Read/Set Parameters` section still exposes raw values directly for low-level access.
+
+The `Energy Output` table also helps compare live activity against those settings:
+
+- shows live per-gate energy as both raw and HLK-style values
+- shows the current trigger and hold thresholds on the same row as `HLK/raw`
+- shows `energy_raw - threshold_raw` margins so you can see how far each gate is from its configured thresholds
+
+## Motion Clear Delay
+
+The web UI now includes a dedicated `Motion Clear Delay` control for parameter `0x04`.
+
+- it loads the current raw value from `0x04`
+- it lets you save a new raw value without using the generic parameter box
+- the repo currently treats this as a firmware-specific raw delay value; the exact time units are not documented here
 
 On this firmware, parameter reads can be unreliable in larger batches. The driver handles this with smaller batched requests and retries.
 
@@ -106,11 +130,42 @@ What it does:
 - monitors UART text output
 - rings the terminal bell once on `ON`
 - rings the terminal bell twice on `OFF`
+- timestamps every motion-change and heartbeat line
+- repeats the last known `ON` or `OFF` state every few seconds so you can tell the monitor is still alive
+- can optionally show a large popup window with the current motion state
+- when `RANGE ...` lines are available, shows an inferred gate number in the popup by mapping distance to 70 cm gates
 
 Useful options:
 
 - `--delay-ms 1000`
+- `--heartbeat-secs 5`
 - `--skip-config`
+- `--popup`
+- `--verbose`
+
+## Gate Power Popup
+
+There is also a dedicated popup monitor for one gate's live ENERGY readings:
+
+```bash
+python monitor_gate_power.py --serial-port /dev/ttyUSB0 --baud 115200 --gate 3
+```
+
+What it does:
+
+- switches the module into `SystemMode ENERGY (0x04)` unless `--skip-config` is used
+- opens a Tkinter popup for the selected gate
+- converts the selected gate's live raw energy readings to the HLK `0..90` style scale using `10 * log10(raw)`
+- updates the selected gate's `current`, `min`, `mean`, and `max` values as new frames arrive
+- keeps the raw values visible in the popup footer for reference
+- shows the current `presence` flag and `distance`
+
+Useful options:
+
+- `--gate 3`
+- `--poll-ms 100`
+- `--skip-config`
+- `--restore-run`
 - `--verbose`
 
 ## Debug Output

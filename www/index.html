@@ -14,6 +14,7 @@
     table { border-collapse: collapse; }
     td, th { border: 1px solid #ccc; padding: 4px 8px; }
     .threshold-table input { width: 8rem; }
+    .hint { color:#555; font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -64,14 +65,27 @@
   </div>
 
   <div class="card">
+    <h3>Motion Clear Delay</h3>
+    <p class="hint">This updates parameter <code>0x04</code>, which this firmware exposes as the motion clear delay.</p>
+    <div class="row">
+      <label>Delay Value <input id="clearDelay" type="number" min="0" step="1"></label>
+      <button onclick="loadClearDelay()">Load Delay</button>
+      <button onclick="saveClearDelay()">Save Delay</button>
+    </div>
+    <pre id="delayOut"></pre>
+  </div>
+
+  <div class="card">
     <h3>Gate Thresholds</h3>
+    <p class="hint">This table uses the official HLK calibrator scale from 0 to 90.</p>
+    <p class="hint">Conversion used behind the scenes: <code>HLK = 10 * log10(raw)</code>, <code>raw = 10^(HLK / 10)</code>. Example: raw <code>1000000</code> displays as HLK <code>60</code>.</p>
     <div class="row">
       <button onclick="loadThresholds()">Load Thresholds</button>
       <button onclick="saveThresholds()">Save Thresholds</button>
     </div>
     <table class="threshold-table">
       <thead>
-        <tr><th>Gate</th><th>Trigger Threshold</th><th>Hold Threshold</th></tr>
+        <tr><th>Gate</th><th>Trigger Threshold (HLK 0-90)</th><th>Hold Threshold (HLK 0-90)</th></tr>
       </thead>
       <tbody id="thresholdRows"></tbody>
     </table>
@@ -83,8 +97,9 @@
     <div id="energy">
       <div>Presence: <b id="presence">-</b></div>
       <div>Distance: <b id="distance">-</b></div>
+      <div><small>Live energy is shown as raw and HLK-style values. Threshold columns show <code>HLK / raw</code>, and margin columns show <code>energy_raw - threshold_raw</code>.</small></div>
       <table>
-        <thead><tr><th>Gate</th><th>Energy</th></tr></thead>
+        <thead><tr><th>Gate</th><th>Energy Raw</th><th>Energy HLK</th><th>Trigger Thresh (HLK/raw)</th><th>Hold Thresh (HLK/raw)</th><th>Vs Trigger</th><th>Vs Hold</th></tr></thead>
         <tbody id="gates"></tbody>
       </table>
       <div><small>Tip: set SystemMode to ENERGY (0x04) to stream these frames.</small></div>
